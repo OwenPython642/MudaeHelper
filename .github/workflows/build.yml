@@ -1,0 +1,34 @@
+name: Compilation Multi-Plateforme
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # On lance 3 machines virtuelles en même temps : Linux, Mac et Windows !
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+    - name: Récupérer le code
+      uses: actions/checkout@v4
+
+    - name: Installer Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Installer PySide6 et PyInstaller
+      run: |
+        pip install PySide6 pyinstaller
+
+    - name: Compiler l'application
+      run: |
+        pyinstaller --onefile --noconsole helper.py
+
+    - name: Sauvegarder le fichier compilé
+      uses: actions/upload-artifact@v4
+      with:
+        name: MudaeHelper-${{ matrix.os }}
+        path: dist/
