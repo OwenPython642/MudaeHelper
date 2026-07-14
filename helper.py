@@ -1,110 +1,15 @@
+import sys
 import os
 import sqlite3
-import tkinter as tk
-from tkinter import messagebox, ttk
-import pyperclip
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QPushButton, QTableWidget, QTableWidgetItem, QMessageBox,
+    QHeaderView
+)
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont
 
 DB_FILENAME = "mudae_characters.db"
-
-
-def rechercher_personnage(texte):
-    """Recherche un personnage par son nom principal ou ses alias dans la DB."""
-    texte_clean = texte.strip(" \t\n\r⚡✨⭐💎🔹🔸▶️👥💌💍❤️")
-    if not texte_clean:
-        return None
-
-    conn = sqlite3.connect(DB_FILENAME)
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        SELECT c.name, c.rank, c.kakera_value 
-        FROM characters c 
-        WHERE LOWER(c.name) = LOWER(?)
-    """,
-        (texte_clean,),
-    )
-    result = cursor.fetchone()
-
-    if not result:
-        cursor.execute(
-            """
-            SELECT c.name, c.rank, c.kakera_value 
-            FROM aliases a
-            JOIN characters c ON a.id_character = c.id_character
-            WHERE LOWER(a.alias) = LOWER(?)
-            LIMIT 1
-        """,
-            (texte_clean,),
-        )
-        result = cursor.fetchone()
-
-    conn.close()
-
-    if result:
-        return {
-            "original_name": result[0],
-            "rank": str(result[1]) if result[1] is not None else "N/A",
-            "kakera": result[2] if result[2] is not None else 0,
-        }
-    return None
-
-
-def vider_tableau():
-    global personnages_affiches
-    personnages_affiches.clear()
-    for item in tree.get_children():
-        tree.delete(item)
-
-
-def analyser_et_ajouter(texte):
-    global personnages_affiches
-
-    character = rechercher_personnage(texte)
-    if not character:
-        return
-
-    if character["original_name"] in personnages_affiches:
-        return
-
-    personnages_affiches.add(character["original_name"])
-
-    tous_les_persos = [character]
-    for item in tree.get_children():
-        valeurs = tree.item(item)["values"]
-        tous_les_persos.append(
-            {
-                "original_name": valeurs[1],
-                "rank": valeurs[2],
-                "kakera": int(str(valeurs[3]).replace(" 🌸", "").replace(" 💎", "")),
-            }
-        )
-
-    for item in tree.get_children():
-        tree.delete(item)
-
-    tous_les_persos.sort(key=lambda x: x["kakera"], reverse=True)
-
-    for i, p in enumerate(tous_les_persos, start=1):
-        tree.insert(
-            "",
-            tk.END,
-            values=(i, p["original_name"], p["rank"], f"{p['kakera']} 🌸"),
-        )
-
-
-def verifier_presse_papiers():
-    global dernier_contenu
-    try:
-        contenu_actuel = pyperclip.paste()
-        if contenu_actuel != dernier_contenu and contenu_actuel.strip():
-            dernier_contenu = contenu_actuel
-            analyser_et_ajouter(contenu_actuel)
-    except Exception:
-        pass
-
-    root.after(300, verifier_presse_papiers)
-
 
 THEMES = {
     "dark": {
@@ -131,157 +36,275 @@ THEMES = {
     },
 }
 
-current_theme = "dark"
+
+class MudaeHelperApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        
+        self.current_theme = "dark"
+        self.dernier_contenu = ""
+        self.personnages_affiches = set()
+
+        self.init_ui()
+        
+        # Timer pour surveiller le presse-papiers toutes les 300 ms
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.verifier_presse_papiers)
+        self.timer.start(300)
+
+    def init_ui(self):
+        self.setWindowTitle("🌸 Mudae Rolls Helper 🌸")
+        self.resize(620, 540)
+        self.setMinimumSize(580, 450)
+        
+        # Rendre la fenêtre toujours au-dessus
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+
+        # Widget central et Layout Principal
+        self.central_widget = QWidget()
+        self.central_widget.setObjectName("main_container")
+        self.setCentralWidget(self.central_widget)
+        
+        main_layout = QVBoxLayout(self.central_widget)
+        main_layout.setContentsMargins(25, 20, 25, 20)
+        main_layout.setSpacing(15)
+
+        # ---- Top Frame Layout ----
+        top_layout = QHBoxLayout()
+        
+        self.title_label = QLabel("✨ quoicoubibou des montagnes ✨")
+        self.title_label.setObjectName("title_label")
+        self.title_label.setFont(QFont("Malgun Gothic", 14, QFont.Bold))
+        
+        self.btn_theme = QPushButton()
+        self.btn_theme.setObjectName("btn_theme")
+        self.btn_theme.setCursor(Qt.PointingHandCursor)
+        self.btn_theme.setFixedSize(40, 32)
+        self.btn_theme.clicked.connect(self.toggle_theme)
+
+        top_layout.addWidget(self.title_label)
+        top_layout.addStretch()
+        top_layout.addWidget(self.btn_theme)
+        main_layout.addLayout(top_layout)
+
+        # ---- TableWidget (Equivalent Treeview) ----
+        self.table = QTableWidget()
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels([
+            "♡", 
+            "Waifu / Husband  🎀", 
+            "Rang  ⭐", 
+            "Kakera  🌸"
+        ])
+        
+        # Configuration des colonnes
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setFocusPolicy(Qt.NoFocus)
+        self.table.setFont(QFont("Segoe UI", 10))
+        self.table.horizontalHeader().setFont(QFont("Segoe UI", 10, QFont.Bold))
+        
+        # Comportement des colonnes et tailles
+        self.table.setColumnWidth(0, 50)
+        self.table.setColumnWidth(1, 240)
+        self.table.setColumnWidth(2, 110)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        
+        main_layout.addWidget(self.table)
+
+        # ---- Bouton Vider la liste ----
+        btn_clear_layout = QHBoxLayout()
+        self.btn_clear = QPushButton("💖  Vider la liste  💖")
+        self.btn_clear.setObjectName("btn_clear")
+        self.btn_clear.setCursor(Qt.PointingHandCursor)
+        self.btn_clear.setFixedHeight(45)
+        self.btn_clear.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        self.btn_clear.clicked.connect(self.vider_tableau)
+        
+        btn_clear_layout.addStretch()
+        btn_clear_layout.addWidget(self.btn_clear, stretch=2)
+        btn_clear_layout.addStretch()
+        
+        main_layout.addLayout(btn_clear_layout)
+
+        # Application du thème par défaut
+        self.appliquer_theme(self.current_theme)
+
+    def appliquer_theme(self, theme_name):
+        self.current_theme = theme_name
+        t = THEMES[theme_name]
+
+        self.btn_theme.setText("☀️" if theme_name == "dark" else "🌙")
+
+        # Application du style global via QSS (Qt Style Sheets)
+        qss = f"""
+        QWidget#main_container {{
+            background-color: {t['bg_main']};
+        }}
+        QLabel#title_label {{
+            color: {t['fg_title']};
+        }}
+        QPushButton#btn_theme {{
+            background-color: {t['bg_container']};
+            color: {t['fg_text']};
+            border: none;
+            border-radius: 6px;
+        }}
+        QPushButton#btn_theme:hover {{
+            background-color: {t['color_header']};
+        }}
+        QTableWidget {{
+            background-color: {t['bg_container']};
+            color: {t['fg_text']};
+            gridline-color: transparent;
+            border: none;
+            selection-background-color: {t['select_bg']};
+            selection-color: {t['select_fg']};
+        }}
+        QHeaderView::section {{
+            background-color: {t['color_header']};
+            color: {t['fg_text']};
+            padding: 5px;
+            border: none;
+            font-weight: bold;
+        }}
+        QPushButton#btn_clear {{
+            background-color: {t['color_primary']};
+            color: {"#1e1a24" if theme_name == "dark" else t['fg_text']};
+            border: none;
+            border-radius: 8px;
+        }}
+        QPushButton#btn_clear:hover {{
+            background-color: {t['color_hover']};
+            color: {"#ffffff" if theme_name == "dark" else t['fg_text']};
+        }}
+        """
+        self.setStyleSheet(qss)
+
+    def toggle_theme(self):
+        if self.current_theme == "dark":
+            self.appliquer_theme("light")
+        else:
+            self.appliquer_theme("dark")
+
+    def rechercher_personnage(self, texte):
+        texte_clean = texte.strip(" \t\n\r⚡✨⭐💎🔹🔸▶️👥💌💍❤️")
+        if not texte_clean:
+            return None
+
+        conn = sqlite3.connect(DB_FILENAME)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT c.name, c.rank, c.kakera_value 
+            FROM characters c 
+            WHERE LOWER(c.name) = LOWER(?)
+            """,
+            (texte_clean,),
+        )
+        result = cursor.fetchone()
+
+        if not result:
+            cursor.execute(
+                """
+                SELECT c.name, c.rank, c.kakera_value 
+                FROM aliases a
+                JOIN characters c ON a.id_character = c.id_character
+                WHERE LOWER(a.alias) = LOWER(?)
+                LIMIT 1
+                """,
+                (texte_clean,),
+            )
+            result = cursor.fetchone()
+
+        conn.close()
+
+        if result:
+            return {
+                "original_name": result[0],
+                "rank": str(result[1]) if result[1] is not None else "N/A",
+                "kakera": result[2] if result[2] is not None else 0,
+            }
+        return None
+
+    def vider_tableau(self):
+        self.personnages_affiches.clear()
+        self.table.setRowCount(0)
+
+    def analyser_et_ajouter(self, texte):
+        character = self.rechercher_personnage(texte)
+        if not character:
+            return
+
+        if character["original_name"] in self.personnages_affiches:
+            return
+
+        self.personnages_affiches.add(character["original_name"])
+
+        # Récupération des données déjà présentes pour le tri
+        tous_les_persos = [character]
+        for row in range(self.table.rowCount()):
+            name = self.table.item(row, 1).text()
+            rank = self.table.item(row, 2).text()
+            kakera_str = self.table.item(row, 3).text()
+            kakera_val = int(kakera_str.replace(" 🌸", "").replace(" 💎", ""))
+            
+            tous_les_persos.append({
+                "original_name": name,
+                "rank": rank,
+                "kakera": kakera_val
+            })
+
+        # Tri par Kakera décroissant
+        tous_les_persos.sort(key=lambda x: x["kakera"], reverse=True)
+
+        # Nettoyage et réinsertion
+        self.table.setRowCount(0)
+        for i, p in enumerate(tous_les_persos, start=1):
+            row_idx = self.table.rowCount()
+            self.table.insertRow(row_idx)
+
+            # Création et configuration des cellules de la ligne
+            item_idx = QTableWidgetItem(str(i))
+            item_idx.setTextAlignment(Qt.AlignCenter)
+            
+            item_name = QTableWidgetItem(p["original_name"])
+            
+            item_rank = QTableWidgetItem(p["rank"])
+            item_rank.setTextAlignment(Qt.AlignCenter)
+            
+            item_kakera = QTableWidgetItem(f"{p['kakera']} 🌸")
+            item_kakera.setTextAlignment(Qt.AlignCenter)
+
+            self.table.setItem(row_idx, 0, item_idx)
+            self.table.setItem(row_idx, 1, item_name)
+            self.table.setItem(row_idx, 2, item_rank)
+            self.table.setItem(row_idx, 3, item_kakera)
+
+    def verifier_presse_papiers(self):
+        try:
+            clipboard = QApplication.clipboard()
+            contenu_actuel = clipboard.text()
+            if contenu_actuel != self.dernier_contenu and contenu_actuel.strip():
+                self.dernier_contenu = contenu_actuel
+                self.analyser_et_ajouter(contenu_actuel)
+        except Exception:
+            pass
 
 
-def appliquer_theme(theme_name):
-    global current_theme
-    current_theme = theme_name
-    t = THEMES[theme_name]
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
 
-    root.configure(bg=t["bg_main"])
-    main_frame.configure(bg=t["bg_main"])
-    top_frame.configure(bg=t["bg_main"])
-    title_label.configure(bg=t["bg_main"], fg=t["fg_title"])
-
-    style.configure(
-        "Treeview",
-        background=t["bg_container"],
-        fieldbackground=t["bg_container"],
-        foreground=t["fg_text"],
-    )
-    style.map(
-        "Treeview",
-        background=[("selected", t["select_bg"])],
-        foreground=[("selected", t["select_fg"])],
-    )
-    style.configure(
-        "Treeview.Heading", background=t["color_header"], foreground=t["fg_text"]
-    )
-    style.map("Treeview.Heading", background=[("active", t["color_primary"])])
-
-    btn_clear.configure(
-        bg=t["color_primary"], fg=t["fg_text"] if theme_name == "light" else "#1e1a24"
-    )
-
-    btn_theme.configure(
-        bg=t["bg_container"],
-        activebackground=t["color_header"],
-        text="☀️" if theme_name == "dark" else "🌙",
-    )
-
-
-def toggle_theme():
-    if current_theme == "dark":
-        appliquer_theme("light")
+    if not os.path.exists(DB_FILENAME):
+        QMessageBox.critical(
+            None, 
+            "Erreur", 
+            f"Base de données '{DB_FILENAME}' introuvable."
+        )
+        sys.exit(1)
     else:
-        appliquer_theme("dark")
-
-
-def on_enter_clear(e):
-    t = THEMES[current_theme]
-    btn_clear["bg"] = t["color_hover"]
-    if current_theme == "dark":
-        btn_clear["fg"] = "#ffffff"
-
-
-def on_leave_clear(e):
-    t = THEMES[current_theme]
-    btn_clear["bg"] = t["color_primary"]
-    btn_clear["fg"] = t["fg_text"] if current_theme == "light" else "#1e1a24"
-
-
-dernier_contenu = ""
-personnages_affiches = set()
-
-if not os.path.exists(DB_FILENAME):
-    root = tk.Tk()
-    root.withdraw()
-    messagebox.showerror("Erreur", f"Base de données '{DB_FILENAME}' introuvable.")
-else:
-    root = tk.Tk()
-    root.title("🌸 Mudae Rolls Helper 🌸")
-    root.geometry("620x540")
-    root.minsize(580, 450)
-    root.attributes("-topmost", True)
-
-    root.grid_rowconfigure(0, weight=1)
-    root.grid_columnconfigure(0, weight=1)
-
-    style = ttk.Style()
-    style.theme_use("clam")
-
-    style.configure("Treeview", rowheight=32, font=("Segoe UI", 10), borderwidth=0)
-    style.configure(
-        "Treeview.Heading", font=("Segoe UI", 10, "bold"), rowheight=35, borderwidth=0
-    )
-
-    main_frame = tk.Frame(root)
-    main_frame.grid(row=0, column=0, sticky="nsew", padx=25, pady=20)
-
-    main_frame.grid_rowconfigure(1, weight=1)
-    main_frame.grid_columnconfigure(0, weight=1)
-
-    top_frame = tk.Frame(main_frame)
-    top_frame.grid(row=0, column=0, pady=(0, 10), sticky="ew")
-    top_frame.grid_columnconfigure(
-        0, weight=1
-    )
-
-    title_label = tk.Label(
-        top_frame,
-        text="✨ quoicoubibou des montagnes ✨",
-        font=("Malgun Gothic", 14, "bold"),
-        anchor="w",
-    )
-    title_label.grid(row=0, column=0, sticky="w")
-
-    btn_theme = tk.Button(
-        top_frame,
-        command=toggle_theme,
-        font=("Segoe UI", 12),
-        bd=0,
-        relief="flat",
-        cursor="hand2",
-        padx=8,
-        pady=4,
-    )
-    btn_theme.grid(row=0, column=1, sticky="e")
-
-    colonnes = ("#", "Nom", "Rang", "Valeur")
-    tree = ttk.Treeview(main_frame, columns=colonnes, show="headings")
-
-    tree.heading("#", text="♡")
-    tree.heading("Nom", text="Waifu / Husband  🎀")
-    tree.heading("Rang", text="Rang  ⭐")
-    tree.heading("Valeur", text="Kakera  🌸")
-
-    tree.column("#", width=50, minwidth=40, anchor="center")
-    tree.column("Nom", width=240, minwidth=150, anchor="w")
-    tree.column("Rang", width=110, minwidth=80, anchor="center")
-    tree.column("Valeur", width=120, minwidth=90, anchor="center")
-
-    tree.grid(row=1, column=0, sticky="nsew")
-
-    btn_clear = tk.Button(
-        main_frame,
-        text="💖  Vider la liste  💖",
-        command=vider_tableau,
-        font=("Segoe UI", 10, "bold"),
-        bd=0,
-        relief="flat",
-        cursor="hand2",
-        activebackground="#ff69b4",
-        activeforeground="white",
-        pady=10,
-    )
-    btn_clear.grid(
-        row=2, column=0, pady=(15, 0), ipadx=30
-    )
-    btn_clear.bind("<Enter>", on_enter_clear)
-    btn_clear.bind("<Leave>", on_leave_clear)
-
-    appliquer_theme(current_theme)
-
-    root.after(300, verifier_presse_papiers)
-    root.mainloop()
+        window = MudaeHelperApp()
+        window.show()
+        sys.exit(app.exec())
