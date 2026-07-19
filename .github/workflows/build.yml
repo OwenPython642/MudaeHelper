@@ -19,14 +19,25 @@ jobs:
       with:
         python-version: '3.11'
 
-    # CORRECTIF ICI : On ajoute pynput à la liste des installations
     - name: Installer les dépendances et PyInstaller
       run: |
         pip install PySide6 pynput pyinstaller
 
-    - name: Compiler l'application
+    # Compilation conditionnelle selon le système d'exploitation pour inclure les bons composants de pynput
+    - name: Compiler l'application (Windows)
+      if: matrix.os == 'windows-latest'
       run: |
-        pyinstaller --onefile --noconsole helper.py
+        pyinstaller --onefile --noconsole --hidden-import="pynput.keyboard._win32" --hidden-import="pynput.mouse._win32" helper.py
+
+    - name: Compiler l'application (Mac)
+      if: matrix.os == 'macos-latest'
+      run: |
+        pyinstaller --onefile --noconsole --hidden-import="pynput.keyboard._darwin" --hidden-import="pynput.mouse._darwin" helper.py
+
+    - name: Compiler l'application (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        pyinstaller --onefile --noconsole --hidden-import="pynput.keyboard._xorg" --hidden-import="pynput.mouse._xorg" helper.py
 
     - name: Sauvegarder le fichier compilé
       uses: actions/upload-artifact@v4
