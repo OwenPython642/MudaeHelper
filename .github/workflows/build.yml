@@ -19,9 +19,10 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Installer PySide6 et PyInstaller
+    # CORRECTIF ICI : On ajoute pynput à la liste des installations
+    - name: Installer les dépendances et PyInstaller
       run: |
-        pip install PySide6 pyinstaller
+        pip install PySide6 pynput pyinstaller
 
     - name: Compiler l'application
       run: |
